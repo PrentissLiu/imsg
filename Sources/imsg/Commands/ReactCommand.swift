@@ -110,6 +110,8 @@ enum ReactCommand {
           set chatLookup to item 2 of argv
           set customEmoji to item 3 of argv
 
+          set the clipboard to chatLookup
+
           tell application "Messages"
             activate
             set targetChat to chat id chatGUID
@@ -122,7 +124,7 @@ enum ReactCommand {
               keystroke "f" using command down
               delay 0.15
               keystroke "a" using command down
-              keystroke chatLookup
+              keystroke "v" using command down
               delay 0.25
               key code 36
               delay 0.35
@@ -145,6 +147,8 @@ enum ReactCommand {
         set chatLookup to item 2 of argv
         set reactionKey to item 3 of argv
 
+        set the clipboard to chatLookup
+
         tell application "Messages"
           activate
           set targetChat to chat id chatGUID
@@ -157,7 +161,7 @@ enum ReactCommand {
             keystroke "f" using command down
             delay 0.15
             keystroke "a" using command down
-            keystroke chatLookup
+            keystroke "v" using command down
             delay 0.25
             key code 36
             delay 0.35
@@ -172,15 +176,32 @@ enum ReactCommand {
   }
 
   private static func preferredChatLookup(chatInfo: ChatInfo) -> String {
+    let identifier = chatInfo.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    let guid = chatInfo.guid.trimmingCharacters(in: .whitespacesAndNewlines)
+    if identifier.contains(";-;") || guid.contains(";-;") {
+      if let directHandle = parsedChatToken(from: identifier) ?? parsedChatToken(from: guid) {
+        return directHandle
+      }
+    }
+
     let preferred = chatInfo.name.trimmingCharacters(in: .whitespacesAndNewlines)
     if !preferred.isEmpty {
       return preferred
     }
-    let identifier = chatInfo.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
     if !identifier.isEmpty {
-      return identifier
+      return parsedChatToken(from: identifier) ?? identifier
     }
-    return chatInfo.guid
+    return parsedChatToken(from: guid) ?? guid
+  }
+
+  private static func parsedChatToken(from raw: String) -> String? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    guard trimmed.contains(";") else { return nil }
+    let parts = trimmed.split(separator: ";", omittingEmptySubsequences: false)
+    guard let tail = parts.last else { return nil }
+    let token = String(tail).trimmingCharacters(in: .whitespacesAndNewlines)
+    return token.isEmpty ? nil : token
   }
 
   private static func isSingleEmoji(_ value: String) -> Bool {
