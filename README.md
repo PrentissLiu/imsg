@@ -1,5 +1,8 @@
 # 💬 imsg — Send, read, stream iMessage & SMS
 
+> This fork is maintained specifically for **macOS 13 compatibility**.  
+> It backports and aligns upstream features while keeping a macOS 13+ runtime target.
+
 A macOS Messages.app CLI to send, read, and stream iMessage/SMS (with attachment metadata). Read-only for receives; send uses AppleScript (no private APIs).
 
 ## Features
