@@ -160,13 +160,6 @@ public struct TypingIndicator: Sendable {
       }
     }
 
-    let handleSel = sel_registerName("existingChatWithHandle:")
-    if registry.responds(to: handleSel) {
-      if let chat = registry.perform(handleSel, with: identifier)?.takeUnretainedValue() as? NSObject {
-        return chat
-      }
-    }
-
     let token = chatToken(from: identifier) ?? identifier
     if token != identifier {
       if registry.responds(to: guidSel) {
@@ -176,11 +169,6 @@ public struct TypingIndicator: Sendable {
       }
       if registry.responds(to: identSel) {
         if let chat = registry.perform(identSel, with: token)?.takeUnretainedValue() as? NSObject {
-          return chat
-        }
-      }
-      if registry.responds(to: handleSel) {
-        if let chat = registry.perform(handleSel, with: token)?.takeUnretainedValue() as? NSObject {
           return chat
         }
       }
