@@ -160,9 +160,102 @@ public struct TypingIndicator: Sendable {
       }
     }
 
+    let handleSel = sel_registerName("existingChatWithHandle:")
+    if registry.responds(to: handleSel) {
+      if let chat = registry.perform(handleSel, with: identifier)?.takeUnretainedValue() as? NSObject {
+        return chat
+      }
+    }
+
+    let token = chatToken(from: identifier) ?? identifier
+    if token != identifier {
+      if registry.responds(to: guidSel) {
+        if let chat = registry.perform(guidSel, with: token)?.takeUnretainedValue() as? NSObject {
+          return chat
+        }
+      }
+      if registry.responds(to: identSel) {
+        if let chat = registry.perform(identSel, with: token)?.takeUnretainedValue() as? NSObject {
+          return chat
+        }
+      }
+      if registry.responds(to: handleSel) {
+        if let chat = registry.perform(handleSel, with: token)?.takeUnretainedValue() as? NSObject {
+          return chat
+        }
+      }
+    }
+
+    // Some systems only return a chat after requesting a daemon load.
+    let loadSel = sel_registerName("loadChatFromDaemonWithChatIdentifier:")
+    if registry.responds(to: loadSel) {
+      _ = registry.perform(loadSel, with: identifier)
+      if token != identifier {
+        _ = registry.perform(loadSel, with: token)
+      }
+      if registry.responds(to: guidSel) {
+        if let chat = registry.perform(guidSel, with: identifier)?.takeUnretainedValue() as? NSObject
+        {
+          return chat
+        }
+        if token != identifier,
+          let chat = registry.perform(guidSel, with: token)?.takeUnretainedValue() as? NSObject
+        {
+          return chat
+        }
+      }
+      if registry.responds(to: identSel) {
+        if let chat = registry.perform(identSel, with: identifier)?.takeUnretainedValue() as? NSObject
+        {
+          return chat
+        }
+        if token != identifier,
+          let chat = registry.perform(identSel, with: token)?.takeUnretainedValue() as? NSObject
+        {
+          return chat
+        }
+      }
+    }
+
+    let allSel = sel_registerName("allExistingChats")
+    if registry.responds(to: allSel),
+      let list = registry.perform(allSel)?.takeUnretainedValue() as? [NSObject]
+    {
+      let identifierLower = identifier.lowercased()
+      let tokenLower = token.lowercased()
+      for chat in list {
+        let guid = objectStringValue(chat, selectorName: "guid")?.lowercased() ?? ""
+        let chatIdentifier = objectStringValue(chat, selectorName: "chatIdentifier")?.lowercased() ?? ""
+        if guid == identifierLower || chatIdentifier == identifierLower {
+          return chat
+        }
+        if guid == tokenLower || chatIdentifier == tokenLower {
+          return chat
+        }
+        if guid.contains(tokenLower) || chatIdentifier.contains(tokenLower) {
+          return chat
+        }
+      }
+    }
+
     throw IMsgError.typingIndicatorFailed(
       "Chat not found for identifier: \(identifier). "
         + "Make sure Messages.app has an active conversation with this contact.")
+  }
+
+  private static func objectStringValue(_ object: NSObject, selectorName: String) -> String? {
+    let selector = sel_registerName(selectorName)
+    guard object.responds(to: selector) else { return nil }
+    return object.perform(selector)?.takeUnretainedValue() as? String
+  }
+
+  private static func chatToken(from raw: String) -> String? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.contains(";") else { return nil }
+    let parts = trimmed.split(separator: ";", omittingEmptySubsequences: false)
+    guard let tail = parts.last else { return nil }
+    let token = String(tail).trimmingCharacters(in: .whitespacesAndNewlines)
+    return token.isEmpty ? nil : token
   }
 }
 
