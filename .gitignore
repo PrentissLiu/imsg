@@ -42,3 +42,6 @@ bin/
 
 # Node.js / pnpm
 pnpm-lock.yaml
+.DS_Store
+.gitignore
+dist/
