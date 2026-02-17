@@ -79,13 +79,17 @@ enum TypingCommand {
         IMsgError.invalidChatTarget("Unknown chat id \(chatID)")
       }
     )
-    let resolvedIdentifier: String
-    if let preferred = resolvedTarget.preferredIdentifier {
-      resolvedIdentifier = preferred
-    } else if input.hasChatTarget {
-      throw IMsgError.invalidChatTarget("Missing chat identifier or guid")
+    let candidates: [String]
+    if input.hasChatTarget {
+      candidates = ChatTargetResolver.chatTypingCandidates(
+        chatIdentifier: resolvedTarget.chatIdentifier,
+        chatGUID: resolvedTarget.chatGUID
+      )
+      if candidates.isEmpty {
+        throw IMsgError.invalidChatTarget("Missing chat identifier or guid")
+      }
     } else {
-      resolvedIdentifier = try ChatTargetResolver.directTypingIdentifier(
+      candidates = try ChatTargetResolver.directTypingIdentifierCandidates(
         recipient: input.recipient,
         serviceRaw: serviceRaw,
         invalidServiceError: { IMsgError.invalidService($0) }
@@ -93,7 +97,9 @@ enum TypingCommand {
     }
 
     if stopFlag {
-      try stopTyping(resolvedIdentifier)
+      try applyTypingAction(candidates: candidates) { candidate in
+        try stopTyping(candidate)
+      }
       if runtime.jsonOutput {
         try JSONLines.print(["status": "stopped"])
       } else {
@@ -104,7 +110,9 @@ enum TypingCommand {
 
     if !durationRaw.isEmpty {
       let seconds = try parseDurationToSeconds(durationRaw)
-      try await typeForDuration(resolvedIdentifier, seconds)
+      try await applyTypingDuration(candidates: candidates, seconds: seconds) { candidate, duration in
+        try await typeForDuration(candidate, duration)
+      }
       if runtime.jsonOutput {
         try JSONLines.print(["status": "completed", "duration_s": "\(seconds)"])
       } else {
@@ -113,7 +121,9 @@ enum TypingCommand {
       return
     }
 
-    try startTyping(resolvedIdentifier)
+    try applyTypingAction(candidates: candidates) { candidate in
+      try startTyping(candidate)
+    }
     if runtime.jsonOutput {
       try JSONLines.print(["status": "started"])
     } else {
@@ -134,5 +144,40 @@ enum TypingCommand {
         "Invalid duration: \(raw). Use e.g. 5s, 3000ms, 1m, or 1h")
     }
     return seconds
+  }
+
+  private static func applyTypingAction(
+    candidates: [String],
+    action: (String) throws -> Void
+  ) throws {
+    var lastError: Error?
+    for candidate in candidates {
+      do {
+        try action(candidate)
+        return
+      } catch {
+        lastError = error
+      }
+    }
+    if let lastError { throw lastError }
+    throw IMsgError.typingIndicatorFailed("No typing target candidates available")
+  }
+
+  private static func applyTypingDuration(
+    candidates: [String],
+    seconds: TimeInterval,
+    action: (String, TimeInterval) async throws -> Void
+  ) async throws {
+    var lastError: Error?
+    for candidate in candidates {
+      do {
+        try await action(candidate, seconds)
+        return
+      } catch {
+        lastError = error
+      }
+    }
+    if let lastError { throw lastError }
+    throw IMsgError.typingIndicatorFailed("No typing target candidates available")
   }
 }

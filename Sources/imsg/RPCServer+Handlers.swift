@@ -150,26 +150,40 @@ extension RPCServer {
       }
     )
 
-    let resolvedIdentifier: String
-    if let preferred = resolvedTarget.preferredIdentifier {
-      resolvedIdentifier = preferred
-    } else if input.hasChatTarget {
-      throw RPCError.invalidParams("missing chat identifier or guid")
+    let candidates: [String]
+    if input.hasChatTarget {
+      candidates = ChatTargetResolver.chatTypingCandidates(
+        chatIdentifier: resolvedTarget.chatIdentifier,
+        chatGUID: resolvedTarget.chatGUID
+      )
+      if candidates.isEmpty {
+        throw RPCError.invalidParams("missing chat identifier or guid")
+      }
     } else {
       let serviceRaw = stringParam(params["service"]) ?? "imessage"
-      resolvedIdentifier = try ChatTargetResolver.directTypingIdentifier(
+      candidates = try ChatTargetResolver.directTypingIdentifierCandidates(
         recipient: input.recipient,
         serviceRaw: serviceRaw,
         invalidServiceError: { _ in RPCError.invalidParams("invalid service") }
       )
     }
 
-    if start {
-      try startTyping(resolvedIdentifier)
-    } else {
-      try stopTyping(resolvedIdentifier)
+    var lastError: Error?
+    for candidate in candidates {
+      do {
+        if start {
+          try startTyping(candidate)
+        } else {
+          try stopTyping(candidate)
+        }
+        respond(id: id, result: ["ok": true])
+        return
+      } catch {
+        lastError = error
+      }
     }
-    respond(id: id, result: ["ok": true])
+    if let lastError { throw lastError }
+    throw RPCError.invalidParams("missing chat identifier or guid")
   }
 
   func handleSend(params: [String: Any], id: Any?) async throws {
