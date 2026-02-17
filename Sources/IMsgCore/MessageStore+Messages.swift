@@ -1,6 +1,42 @@
 import Foundation
 import SQLite
 
+private struct MessageRowColumns {
+  let rowID: Int
+  let chatID: Int?
+  let handleID: Int
+  let sender: Int
+  let text: Int
+  let date: Int
+  let isFromMe: Int
+  let service: Int
+  let isAudioMessage: Int
+  let destinationCallerID: Int
+  let guid: Int
+  let associatedGUID: Int
+  let associatedType: Int
+  let attachments: Int
+  let body: Int
+  let threadOriginatorGUID: Int
+}
+
+private struct DecodedMessageRow {
+  let rowID: Int64
+  let chatID: Int64
+  let handleID: Int64?
+  let sender: String
+  let text: String
+  let date: Date
+  let isFromMe: Bool
+  let service: String
+  let destinationCallerID: String
+  let guid: String
+  let associatedGUID: String
+  let associatedType: Int?
+  let attachments: Int
+  let threadOriginatorGUID: String
+}
+
 extension MessageStore {
   public func messages(chatID: Int64, limit: Int) throws -> [Message] {
     return try messages(chatID: chatID, limit: limit, filter: nil)
@@ -13,6 +49,8 @@ extension MessageStore {
     let associatedTypeColumn = hasReactionColumns ? "m.associated_message_type" : "NULL"
     let destinationCallerColumn = hasDestinationCallerID ? "m.destination_caller_id" : "NULL"
     let audioMessageColumn = hasAudioMessageColumn ? "m.is_audio_message" : "0"
+    let threadOriginatorColumn =
+      hasThreadOriginatorGUIDColumn ? "m.thread_originator_guid" : "NULL"
     let reactionFilter =
       hasReactionColumns
       ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
@@ -22,7 +60,8 @@ extension MessageStore {
              \(audioMessageColumn) AS is_audio_message, \(destinationCallerColumn) AS destination_caller_id,
              \(guidColumn) AS guid, \(associatedGuidColumn) AS associated_guid, \(associatedTypeColumn) AS associated_type,
              (SELECT COUNT(*) FROM message_attachment_join maj WHERE maj.message_id = m.ROWID) AS attachments,
-             \(bodyColumn) AS body
+             \(bodyColumn) AS body,
+             \(threadOriginatorColumn) AS thread_originator_guid
       FROM message m
       JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
       LEFT JOIN handle h ON m.handle_id = h.ROWID
@@ -53,48 +92,52 @@ extension MessageStore {
 
     sql += " ORDER BY m.date DESC LIMIT ?"
     bindings.append(limit)
+    let columns = MessageRowColumns(
+      rowID: 0,
+      chatID: nil,
+      handleID: 1,
+      sender: 2,
+      text: 3,
+      date: 4,
+      isFromMe: 5,
+      service: 6,
+      isAudioMessage: 7,
+      destinationCallerID: 8,
+      guid: 9,
+      associatedGUID: 10,
+      associatedType: 11,
+      attachments: 12,
+      body: 13,
+      threadOriginatorGUID: 14
+    )
 
     return try withConnection { db in
       var messages: [Message] = []
       for row in try db.prepare(sql, bindings) {
-        let rowID = int64Value(row[0]) ?? 0
-        let handleID = int64Value(row[1])
-        var sender = stringValue(row[2])
-        let text = stringValue(row[3])
-        let date = appleDate(from: int64Value(row[4]))
-        let isFromMe = boolValue(row[5])
-        let service = stringValue(row[6])
-        let isAudioMessage = boolValue(row[7])
-        let destinationCallerID = stringValue(row[8])
-        if sender.isEmpty && !destinationCallerID.isEmpty {
-          sender = destinationCallerID
-        }
-        let guid = stringValue(row[9])
-        let associatedGuid = stringValue(row[10])
-        let associatedType = intValue(row[11])
-        let attachments = intValue(row[12]) ?? 0
-        let body = dataValue(row[13])
-        var resolvedText = text.isEmpty ? TypedStreamParser.parseAttributedBody(body) : text
-        if isAudioMessage, let transcription = try audioTranscription(for: rowID) {
-          resolvedText = transcription
-        }
+        let decoded = try decodeMessageRow(row, columns: columns, fallbackChatID: chatID)
         let replyToGUID = replyToGUID(
-          associatedGuid: associatedGuid,
-          associatedType: associatedType
+          associatedGuid: decoded.associatedGUID,
+          associatedType: decoded.associatedType
         )
         messages.append(
           Message(
-            rowID: rowID,
-            chatID: chatID,
-            sender: sender,
-            text: resolvedText,
-            date: date,
-            isFromMe: isFromMe,
-            service: service,
-            handleID: handleID,
-            attachmentsCount: attachments,
-            guid: guid,
-            replyToGUID: replyToGUID
+            rowID: decoded.rowID,
+            chatID: decoded.chatID,
+            sender: decoded.sender,
+            text: decoded.text,
+            date: decoded.date,
+            isFromMe: decoded.isFromMe,
+            service: decoded.service,
+            handleID: decoded.handleID,
+            attachmentsCount: decoded.attachments,
+            guid: decoded.guid,
+            routing: Message.RoutingMetadata(
+              replyToGUID: replyToGUID,
+              threadOriginatorGUID: decoded.threadOriginatorGUID.isEmpty
+                ? nil : decoded.threadOriginatorGUID,
+              destinationCallerID: decoded.destinationCallerID.isEmpty
+                ? nil : decoded.destinationCallerID
+            )
           ))
       }
       return messages
@@ -102,22 +145,47 @@ extension MessageStore {
   }
 
   public func messagesAfter(afterRowID: Int64, chatID: Int64?, limit: Int) throws -> [Message] {
+    return try messagesAfter(
+      afterRowID: afterRowID,
+      chatID: chatID,
+      limit: limit,
+      includeReactions: false
+    )
+  }
+
+  public func messagesAfter(
+    afterRowID: Int64,
+    chatID: Int64?,
+    limit: Int,
+    includeReactions: Bool
+  ) throws -> [Message] {
     let bodyColumn = hasAttributedBody ? "m.attributedBody" : "NULL"
     let guidColumn = hasReactionColumns ? "m.guid" : "NULL"
     let associatedGuidColumn = hasReactionColumns ? "m.associated_message_guid" : "NULL"
     let associatedTypeColumn = hasReactionColumns ? "m.associated_message_type" : "NULL"
     let destinationCallerColumn = hasDestinationCallerID ? "m.destination_caller_id" : "NULL"
     let audioMessageColumn = hasAudioMessageColumn ? "m.is_audio_message" : "0"
-    let reactionFilter =
-      hasReactionColumns
-      ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
-      : ""
+    let threadOriginatorColumn =
+      hasThreadOriginatorGUIDColumn ? "m.thread_originator_guid" : "NULL"
+    // Only filter out reactions if includeReactions is false
+    let reactionFilter: String
+    if includeReactions {
+      reactionFilter = ""
+    } else {
+      if hasReactionColumns {
+        reactionFilter =
+          " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
+      } else {
+        reactionFilter = ""
+      }
+    }
     var sql = """
       SELECT m.ROWID, cmj.chat_id, m.handle_id, h.id, IFNULL(m.text, '') AS text, m.date, m.is_from_me, m.service,
              \(audioMessageColumn) AS is_audio_message, \(destinationCallerColumn) AS destination_caller_id,
              \(guidColumn) AS guid, \(associatedGuidColumn) AS associated_guid, \(associatedTypeColumn) AS associated_type,
              (SELECT COUNT(*) FROM message_attachment_join maj WHERE maj.message_id = m.ROWID) AS attachments,
-             \(bodyColumn) AS body
+             \(bodyColumn) AS body,
+             \(threadOriginatorColumn) AS thread_originator_guid
       FROM message m
       LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
       LEFT JOIN handle h ON m.handle_id = h.ROWID
@@ -130,52 +198,117 @@ extension MessageStore {
     }
     sql += " ORDER BY m.ROWID ASC LIMIT ?"
     bindings.append(limit)
+    let columns = MessageRowColumns(
+      rowID: 0,
+      chatID: 1,
+      handleID: 2,
+      sender: 3,
+      text: 4,
+      date: 5,
+      isFromMe: 6,
+      service: 7,
+      isAudioMessage: 8,
+      destinationCallerID: 9,
+      guid: 10,
+      associatedGUID: 11,
+      associatedType: 12,
+      attachments: 13,
+      body: 14,
+      threadOriginatorGUID: 15
+    )
 
     return try withConnection { db in
       var messages: [Message] = []
       for row in try db.prepare(sql, bindings) {
-        let rowID = int64Value(row[0]) ?? 0
-        let resolvedChatID = int64Value(row[1]) ?? chatID ?? 0
-        let handleID = int64Value(row[2])
-        var sender = stringValue(row[3])
-        let text = stringValue(row[4])
-        let date = appleDate(from: int64Value(row[5]))
-        let isFromMe = boolValue(row[6])
-        let service = stringValue(row[7])
-        let isAudioMessage = boolValue(row[8])
-        let destinationCallerID = stringValue(row[9])
-        if sender.isEmpty && !destinationCallerID.isEmpty {
-          sender = destinationCallerID
-        }
-        let guid = stringValue(row[10])
-        let associatedGuid = stringValue(row[11])
-        let associatedType = intValue(row[12])
-        let attachments = intValue(row[13]) ?? 0
-        let body = dataValue(row[14])
-        var resolvedText = text.isEmpty ? TypedStreamParser.parseAttributedBody(body) : text
-        if isAudioMessage, let transcription = try audioTranscription(for: rowID) {
-          resolvedText = transcription
-        }
+        let decoded = try decodeMessageRow(row, columns: columns, fallbackChatID: chatID)
         let replyToGUID = replyToGUID(
-          associatedGuid: associatedGuid,
-          associatedType: associatedType
+          associatedGuid: decoded.associatedGUID,
+          associatedType: decoded.associatedType
         )
+        let reaction = decodeReaction(
+          associatedType: decoded.associatedType,
+          associatedGUID: decoded.associatedGUID,
+          text: decoded.text
+        )
+
         messages.append(
           Message(
-            rowID: rowID,
-            chatID: resolvedChatID,
-            sender: sender,
-            text: resolvedText,
-            date: date,
-            isFromMe: isFromMe,
-            service: service,
-            handleID: handleID,
-            attachmentsCount: attachments,
-            guid: guid,
-            replyToGUID: replyToGUID
+            rowID: decoded.rowID,
+            chatID: decoded.chatID,
+            sender: decoded.sender,
+            text: decoded.text,
+            date: decoded.date,
+            isFromMe: decoded.isFromMe,
+            service: decoded.service,
+            handleID: decoded.handleID,
+            attachmentsCount: decoded.attachments,
+            guid: decoded.guid,
+            routing: Message.RoutingMetadata(
+              replyToGUID: replyToGUID,
+              threadOriginatorGUID: decoded.threadOriginatorGUID.isEmpty
+                ? nil : decoded.threadOriginatorGUID,
+              destinationCallerID: decoded.destinationCallerID.isEmpty
+                ? nil : decoded.destinationCallerID
+            ),
+            reaction: Message.ReactionMetadata(
+              isReaction: reaction.isReaction,
+              reactionType: reaction.reactionType,
+              isReactionAdd: reaction.isReactionAdd,
+              reactedToGUID: reaction.reactedToGUID
+            )
           ))
       }
       return messages
     }
+  }
+
+  private func decodeMessageRow(
+    _ row: [Binding?],
+    columns: MessageRowColumns,
+    fallbackChatID: Int64?
+  ) throws -> DecodedMessageRow {
+    let rowID = int64Value(row[columns.rowID]) ?? 0
+    let resolvedChatID = columns.chatID.flatMap { int64Value(row[$0]) } ?? fallbackChatID ?? 0
+    let handleID = int64Value(row[columns.handleID])
+    let sender = stringValue(row[columns.sender])
+    let text = stringValue(row[columns.text])
+    let date = appleDate(from: int64Value(row[columns.date]))
+    let isFromMe = boolValue(row[columns.isFromMe])
+    let service = stringValue(row[columns.service])
+    let isAudioMessage = boolValue(row[columns.isAudioMessage])
+    let destinationCallerID = stringValue(row[columns.destinationCallerID])
+    let guid = stringValue(row[columns.guid])
+    let associatedGUID = stringValue(row[columns.associatedGUID])
+    let associatedType = intValue(row[columns.associatedType])
+    let attachments = intValue(row[columns.attachments]) ?? 0
+    let body = dataValue(row[columns.body])
+    let threadOriginatorGUID = stringValue(row[columns.threadOriginatorGUID])
+
+    var resolvedText = text.isEmpty ? TypedStreamParser.parseAttributedBody(body) : text
+    if isAudioMessage, let transcription = try audioTranscription(for: rowID) {
+      resolvedText = transcription
+    }
+
+    var resolvedSender = sender
+    if resolvedSender.isEmpty && !destinationCallerID.isEmpty {
+      resolvedSender = destinationCallerID
+    }
+
+    return DecodedMessageRow(
+      rowID: rowID,
+      chatID: resolvedChatID,
+      handleID: handleID,
+      sender: resolvedSender,
+      text: resolvedText,
+      date: date,
+      isFromMe: isFromMe,
+      service: service,
+      destinationCallerID: destinationCallerID,
+      guid: guid,
+      associatedGUID: associatedGUID,
+      associatedType: associatedType,
+      attachments: attachments,
+      threadOriginatorGUID: threadOriginatorGUID
+    )
   }
 }

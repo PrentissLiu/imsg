@@ -7,7 +7,8 @@ import XCTest
 final class RPCPayloadsTests: XCTestCase {
 func testIsGroupHandleFlagsGroup() {
   expect(isGroupHandle(identifier: "iMessage;+;chat123", guid: "") == true)
-  expect(isGroupHandle(identifier: "", guid: "iMessage;-;chat999") == true)
+  expect(isGroupHandle(identifier: "", guid: "iMessage;+;chat999") == true)
+  expect(isGroupHandle(identifier: "", guid: "iMessage;-;chat999") == false)
   expect(isGroupHandle(identifier: "+1555", guid: "") == false)
 }
 
@@ -28,7 +29,7 @@ func testChatPayloadIncludesParticipantsAndGroupFlag() {
   expect((payload["participants"] as? [String])?.count == 2)
 }
 
-func testMessagePayloadIncludesChatFields() {
+func testMessagePayloadIncludesChatFields() throws {
   let message = Message(
     rowID: 5,
     chatID: 10,
@@ -67,7 +68,7 @@ func testMessagePayloadIncludesChatFields() {
     date: Date(timeIntervalSince1970: 2),
     associatedMessageID: 5
   )
-  let payload = messagePayload(
+  let payload = try messagePayload(
     message: message,
     chatInfo: chatInfo,
     participants: ["+111"],
@@ -86,7 +87,7 @@ func testMessagePayloadIncludesChatFields() {
       == ReactionType.like.emoji)
 }
 
-func testMessagePayloadOmitsEmptyReplyToGuid() {
+func testMessagePayloadOmitsEmptyReplyToGuid() throws {
   let message = Message(
     rowID: 6,
     chatID: 10,
@@ -100,7 +101,7 @@ func testMessagePayloadOmitsEmptyReplyToGuid() {
     guid: "msg-guid-6",
     replyToGUID: nil
   )
-  let payload = messagePayload(
+  let payload = try messagePayload(
     message: message,
     chatInfo: nil,
     participants: [],

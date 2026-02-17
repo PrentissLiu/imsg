@@ -28,29 +28,17 @@ func messagePayload(
   participants: [String],
   attachments: [AttachmentMeta],
   reactions: [Reaction]
-) -> [String: Any] {
+) throws -> [String: Any] {
   let identifier = chatInfo?.identifier ?? ""
   let guid = chatInfo?.guid ?? ""
   let name = chatInfo?.name ?? ""
-  var payload: [String: Any] = [
-    "id": message.rowID,
-    "chat_id": message.chatID,
-    "guid": message.guid,
-    "sender": message.sender,
-    "is_from_me": message.isFromMe,
-    "text": message.text,
-    "created_at": CLIISO8601.format(message.date),
-    "attachments": attachments.map { attachmentPayload($0) },
-    "reactions": reactions.map { reactionPayload($0) },
-    "chat_identifier": identifier,
-    "chat_guid": guid,
-    "chat_name": name,
-    "participants": participants,
-    "is_group": isGroupHandle(identifier: identifier, guid: guid),
-  ]
-  if let replyToGUID = message.replyToGUID, !replyToGUID.isEmpty {
-    payload["reply_to_guid"] = replyToGUID
-  }
+  let core = MessagePayload(message: message, attachments: attachments, reactions: reactions)
+  var payload = try core.asDictionary()
+  payload["chat_identifier"] = identifier
+  payload["chat_guid"] = guid
+  payload["chat_name"] = name
+  payload["participants"] = participants
+  payload["is_group"] = isGroupHandle(identifier: identifier, guid: guid)
   return payload
 }
 
@@ -79,8 +67,7 @@ func reactionPayload(_ reaction: Reaction) -> [String: Any] {
 }
 
 func isGroupHandle(identifier: String, guid: String) -> Bool {
-  let handle = identifier.isEmpty ? guid : identifier
-  return handle.contains(";+;") || handle.contains(";-;")
+  return guid.contains(";+;") || identifier.contains(";+;")
 }
 
 func stringParam(_ value: Any?) -> String? {

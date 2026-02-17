@@ -26,8 +26,10 @@ make build
 ## Commands
 - `imsg chats [--limit 20] [--json]` — list recent conversations.
 - `imsg history --chat-id <id> [--limit 50] [--attachments] [--participants +15551234567,...] [--start 2025-01-01T00:00:00Z] [--end 2025-02-01T00:00:00Z] [--json]`
-- `imsg watch [--chat-id <id>] [--since-rowid <n>] [--debounce 250ms] [--attachments] [--participants …] [--start …] [--end …] [--json]`
+- `imsg watch [--chat-id <id>] [--since-rowid <n>] [--debounce 250ms] [--attachments] [--reactions] [--participants …] [--start …] [--end …] [--json]`
 - `imsg send --to <handle> [--text "hi"] [--file /path/img.jpg] [--service imessage|sms|auto] [--region US]`
+- `imsg react --chat-id <id> --reaction <love|like|dislike|laugh|emphasis|question|emoji>`
+- `imsg typing (--to <handle> | --chat-id <id> | --chat-identifier <id> | --chat-guid <guid>) [--duration 5s] [--stop true] [--service imessage|sms|auto]`
 
 ### Quick samples
 ```
@@ -55,9 +57,9 @@ imsg send --to "+14155551212" --text "hi" --file ~/Desktop/pic.jpg --service ime
 
 ## JSON output
 `imsg chats --json` emits one JSON object per chat with fields: `id`, `name`, `identifier`, `service`, `last_message_at`.
-`imsg history --json` and `imsg watch --json` emit one JSON object per message with fields: `id`, `chat_id`, `guid`, `reply_to_guid`, `sender`, `is_from_me`, `text`, `created_at`, `attachments` (array of metadata with `filename`, `transfer_name`, `uti`, `mime_type`, `total_bytes`, `is_sticker`, `original_path`, `missing`), `reactions`.
+`imsg history --json` and `imsg watch --json` emit one JSON object per message with fields: `id`, `chat_id`, `guid`, `reply_to_guid`, `thread_originator_guid`, `destination_caller_id`, `sender`, `is_from_me`, `text`, `created_at`, `attachments` (array of metadata with `filename`, `transfer_name`, `uti`, `mime_type`, `total_bytes`, `is_sticker`, `original_path`, `missing`), `reactions`, `is_reaction`, `reaction_type`, `reaction_emoji`, `is_reaction_add`, `reacted_to_guid`.
 
-Note: `reply_to_guid` and `reactions` are read-only metadata.
+Note: `reply_to_guid`, `thread_originator_guid`, `destination_caller_id`, and `reactions` are read-only metadata.
 
 ## Permissions troubleshooting
 If you see “unable to open database file” or empty output:

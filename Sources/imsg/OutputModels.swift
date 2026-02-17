@@ -30,24 +30,53 @@ struct MessagePayload: Codable {
   let chatID: Int64
   let guid: String
   let replyToGUID: String?
+  let threadOriginatorGUID: String?
   let sender: String
   let isFromMe: Bool
   let text: String
   let createdAt: String
   let attachments: [AttachmentPayload]
   let reactions: [ReactionPayload]
+  /// The destination_caller_id from the database. For messages where is_from_me is true,
+  /// this can help distinguish between messages actually sent by the local user vs
+  /// messages received on a secondary phone number registered with the same Apple ID.
+  let destinationCallerID: String?
+
+  // Reaction event metadata (populated when this message is a reaction event)
+  let isReaction: Bool?
+  let reactionType: String?
+  let reactionEmoji: String?
+  let isReactionAdd: Bool?
+  let reactedToGUID: String?
 
   init(message: Message, attachments: [AttachmentMeta], reactions: [Reaction] = []) {
     self.id = message.rowID
     self.chatID = message.chatID
     self.guid = message.guid
     self.replyToGUID = message.replyToGUID
+    self.threadOriginatorGUID = message.threadOriginatorGUID
     self.sender = message.sender
     self.isFromMe = message.isFromMe
     self.text = message.text
     self.createdAt = CLIISO8601.format(message.date)
     self.attachments = attachments.map { AttachmentPayload(meta: $0) }
     self.reactions = reactions.map { ReactionPayload(reaction: $0) }
+    self.destinationCallerID = message.destinationCallerID
+
+    // Reaction event metadata
+    if message.isReaction {
+      self.isReaction = true
+      self.reactionType = message.reactionType?.name
+      self.reactionEmoji = message.reactionType?.emoji
+      self.isReactionAdd = message.isReactionAdd
+      self.reactedToGUID = message.reactedToGUID
+    } else {
+      self.isReaction = nil
+      self.reactionType = nil
+      self.reactionEmoji = nil
+      self.isReactionAdd = nil
+      self.reactedToGUID = nil
+    }
   }
 
   enum CodingKeys: String, CodingKey {
@@ -55,13 +84,32 @@ struct MessagePayload: Codable {
     case chatID = "chat_id"
     case guid
     case replyToGUID = "reply_to_guid"
+    case threadOriginatorGUID = "thread_originator_guid"
     case sender
     case isFromMe = "is_from_me"
     case text
     case createdAt = "created_at"
     case attachments
     case reactions
+    case destinationCallerID = "destination_caller_id"
+    case isReaction = "is_reaction"
+    case reactionType = "reaction_type"
+    case reactionEmoji = "reaction_emoji"
+    case isReactionAdd = "is_reaction_add"
+    case reactedToGUID = "reacted_to_guid"
   }
+}
+
+extension MessagePayload {
+  func asDictionary() throws -> [String: Any] {
+    let data = try MessagePayload.encoder.encode(self)
+    let json = try JSONSerialization.jsonObject(with: data)
+    return (json as? [String: Any]) ?? [:]
+  }
+
+  private static let encoder: JSONEncoder = {
+    JSONEncoder()
+  }()
 }
 
 struct ReactionPayload: Codable {

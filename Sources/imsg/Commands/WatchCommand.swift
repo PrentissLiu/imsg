@@ -26,7 +26,11 @@ enum WatchCommand {
         flags: [
           .make(
             label: "attachments", names: [.long("attachments")], help: "include attachment metadata"
-          )
+          ),
+          .make(
+            label: "reactions", names: [.long("reactions")],
+            help: "include reaction events (tapback add/remove) in the stream"
+          ),
         ]
       )
     ),
@@ -60,6 +64,7 @@ enum WatchCommand {
     }
     let sinceRowID = values.optionInt64("sinceRowID")
     let showAttachments = values.flag("attachments")
+    let includeReactions = values.flag("reactions")
     let participants = values.optionValues("participants")
       .flatMap { $0.split(separator: ",").map { String($0) } }
       .filter { !$0.isEmpty }
@@ -73,7 +78,8 @@ enum WatchCommand {
     let watcher = MessageWatcher(store: store)
     let config = MessageWatcherConfiguration(
       debounceInterval: debounceInterval,
-      batchLimit: 100
+      batchLimit: 100,
+      includeReactions: includeReactions
     )
 
     let stream = streamProvider(watcher, chatID, sinceRowID, config)
@@ -89,23 +95,31 @@ enum WatchCommand {
           attachments: attachments,
           reactions: reactions
         )
-        try JSONLines.print(payload)
+        try StdoutWriter.writeJSONLine(payload)
         continue
       }
       let direction = message.isFromMe ? "sent" : "recv"
       let timestamp = CLIISO8601.format(message.date)
-      Swift.print("\(timestamp) [\(direction)] \(message.sender): \(message.text)")
+      if message.isReaction, let reactionType = message.reactionType {
+        let action = (message.isReactionAdd ?? true) ? "added" : "removed"
+        let targetGUID = message.reactedToGUID ?? "unknown"
+        StdoutWriter.writeLine(
+          "\(timestamp) [\(direction)] \(message.sender) \(action) \(reactionType.emoji) reaction to \(targetGUID)"
+        )
+        continue
+      }
+      StdoutWriter.writeLine("\(timestamp) [\(direction)] \(message.sender): \(message.text)")
       if message.attachmentsCount > 0 {
         if showAttachments {
           let metas = try store.attachments(for: message.rowID)
           for meta in metas {
             let name = displayName(for: meta)
-            Swift.print(
+            StdoutWriter.writeLine(
               "  attachment: name=\(name) mime=\(meta.mimeType) missing=\(meta.missing) path=\(meta.originalPath)"
             )
           }
         } else {
-          Swift.print(
+          StdoutWriter.writeLine(
             "  (\(message.attachmentsCount) attachment\(pluralSuffix(for: message.attachmentsCount)))"
           )
         }

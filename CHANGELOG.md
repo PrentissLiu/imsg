@@ -1,9 +1,20 @@
 # Changelog
 
-## 0.4.1 - Unreleased
+## Unreleased
 
-- fix: prefer handle sends when chat identifier is a direct handle
-- fix: apply history filters before limit (#20, thanks @tommybananas)
+## 0.5.0 - 2026-02-17
+
+- feat: add typing indicator command + RPC methods with stricter validation
+- feat: add `--reactions` flag for `watch` to include tapback add/remove events
+- feat: add `imsg react` command for tapback reactions via UI automation
+- feat: reaction events now include `is_reaction`, `reaction_type`, `reaction_emoji`, `is_reaction_add`, `reacted_to_guid`
+- feat: add `include_reactions` toggle to `watch.subscribe` RPC
+- feat: include `thread_originator_guid` in message output
+- feat: expose `destination_caller_id` in message output
+- fix: flush watch output immediately when stdout is buffered
+- fix: detect groups from `;+;` prefix in guid/identifier for RPC payloads
+- refactor: consolidate schema detection, stdout writing, and payload mapping paths
+- compat: keep fork support for macOS 13 while aligning to upstream v0.5.0 features
 
 ## 0.4.0 - 2026-01-07
 - feat: surface audio message transcriptions (thanks @antons)

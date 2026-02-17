@@ -217,10 +217,46 @@ public struct ChatInfo: Sendable, Equatable {
 }
 
 public struct Message: Sendable, Equatable {
+  public struct RoutingMetadata: Sendable, Equatable {
+    public let replyToGUID: String?
+    public let threadOriginatorGUID: String?
+    public let destinationCallerID: String?
+
+    public init(
+      replyToGUID: String? = nil,
+      threadOriginatorGUID: String? = nil,
+      destinationCallerID: String? = nil
+    ) {
+      self.replyToGUID = replyToGUID
+      self.threadOriginatorGUID = threadOriginatorGUID
+      self.destinationCallerID = destinationCallerID
+    }
+  }
+
+  public struct ReactionMetadata: Sendable, Equatable {
+    public let isReaction: Bool
+    public let reactionType: ReactionType?
+    public let isReactionAdd: Bool?
+    public let reactedToGUID: String?
+
+    public init(
+      isReaction: Bool = false,
+      reactionType: ReactionType? = nil,
+      isReactionAdd: Bool? = nil,
+      reactedToGUID: String? = nil
+    ) {
+      self.isReaction = isReaction
+      self.reactionType = reactionType
+      self.isReactionAdd = isReactionAdd
+      self.reactedToGUID = reactedToGUID
+    }
+  }
+
   public let rowID: Int64
   public let chatID: Int64
   public let guid: String
   public let replyToGUID: String?
+  public let threadOriginatorGUID: String?
   public let sender: String
   public let text: String
   public let date: Date
@@ -228,6 +264,20 @@ public struct Message: Sendable, Equatable {
   public let service: String
   public let handleID: Int64?
   public let attachmentsCount: Int
+  /// The destination_caller_id from the database. For messages where is_from_me is true,
+  /// this can help distinguish between messages actually sent by the local user vs
+  /// messages received on a secondary phone number registered with the same Apple ID.
+  public let destinationCallerID: String?
+
+  // Reaction metadata (populated when message is a reaction event)
+  /// Whether this message is a reaction event (tapback add/remove)
+  public let isReaction: Bool
+  /// The type of reaction (only set when isReaction is true)
+  public let reactionType: ReactionType?
+  /// Whether this is adding (true) or removing (false) a reaction (only set when isReaction is true)
+  public let isReactionAdd: Bool?
+  /// The GUID of the message being reacted to (only set when isReaction is true)
+  public let reactedToGUID: String?
 
   public init(
     rowID: Int64,
@@ -240,12 +290,14 @@ public struct Message: Sendable, Equatable {
     handleID: Int64?,
     attachmentsCount: Int,
     guid: String = "",
-    replyToGUID: String? = nil
+    routing: RoutingMetadata = RoutingMetadata(),
+    reaction: ReactionMetadata = ReactionMetadata()
   ) {
     self.rowID = rowID
     self.chatID = chatID
     self.guid = guid
-    self.replyToGUID = replyToGUID
+    self.replyToGUID = routing.replyToGUID
+    self.threadOriginatorGUID = routing.threadOriginatorGUID
     self.sender = sender
     self.text = text
     self.date = date
@@ -253,6 +305,55 @@ public struct Message: Sendable, Equatable {
     self.service = service
     self.handleID = handleID
     self.attachmentsCount = attachmentsCount
+    self.destinationCallerID = routing.destinationCallerID
+    self.isReaction = reaction.isReaction
+    self.reactionType = reaction.reactionType
+    self.isReactionAdd = reaction.isReactionAdd
+    self.reactedToGUID = reaction.reactedToGUID
+  }
+
+  public init(
+    rowID: Int64,
+    chatID: Int64,
+    sender: String,
+    text: String,
+    date: Date,
+    isFromMe: Bool,
+    service: String,
+    handleID: Int64?,
+    attachmentsCount: Int,
+    guid: String = "",
+    replyToGUID: String? = nil,
+    threadOriginatorGUID: String? = nil,
+    destinationCallerID: String? = nil,
+    isReaction: Bool = false,
+    reactionType: ReactionType? = nil,
+    isReactionAdd: Bool? = nil,
+    reactedToGUID: String? = nil
+  ) {
+    self.init(
+      rowID: rowID,
+      chatID: chatID,
+      sender: sender,
+      text: text,
+      date: date,
+      isFromMe: isFromMe,
+      service: service,
+      handleID: handleID,
+      attachmentsCount: attachmentsCount,
+      guid: guid,
+      routing: RoutingMetadata(
+        replyToGUID: replyToGUID,
+        threadOriginatorGUID: threadOriginatorGUID,
+        destinationCallerID: destinationCallerID
+      ),
+      reaction: ReactionMetadata(
+        isReaction: isReaction,
+        reactionType: reactionType,
+        isReactionAdd: isReactionAdd,
+        reactedToGUID: reactedToGUID
+      )
+    )
   }
 }
 
