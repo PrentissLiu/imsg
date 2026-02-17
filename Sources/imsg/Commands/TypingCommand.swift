@@ -95,10 +95,20 @@ enum TypingCommand {
         invalidServiceError: { IMsgError.invalidService($0) }
       )
     }
+    let fallbackLookup = typingFallbackLookup(input: input, resolved: resolvedTarget)
+    let fallbackChatGUID = resolvedTarget.chatGUID.isEmpty ? nil : resolvedTarget.chatGUID
 
     if stopFlag {
-      try applyTypingAction(candidates: candidates) { candidate in
-        try stopTyping(candidate)
+      do {
+        try applyTypingAction(candidates: candidates) { candidate in
+          try stopTyping(candidate)
+        }
+      } catch {
+        try simulateTypingFallback(
+          chatGUID: fallbackChatGUID,
+          lookup: fallbackLookup,
+          mode: .stop
+        )
       }
       if runtime.jsonOutput {
         try JSONLines.print(["status": "stopped"])
@@ -110,8 +120,16 @@ enum TypingCommand {
 
     if !durationRaw.isEmpty {
       let seconds = try parseDurationToSeconds(durationRaw)
-      try await applyTypingDuration(candidates: candidates, seconds: seconds) { candidate, duration in
-        try await typeForDuration(candidate, duration)
+      do {
+        try await applyTypingDuration(candidates: candidates, seconds: seconds) { candidate, duration in
+          try await typeForDuration(candidate, duration)
+        }
+      } catch {
+        try simulateTypingFallback(
+          chatGUID: fallbackChatGUID,
+          lookup: fallbackLookup,
+          mode: .duration(seconds: seconds)
+        )
       }
       if runtime.jsonOutput {
         try JSONLines.print(["status": "completed", "duration_s": "\(seconds)"])
@@ -121,8 +139,16 @@ enum TypingCommand {
       return
     }
 
-    try applyTypingAction(candidates: candidates) { candidate in
-      try startTyping(candidate)
+    do {
+      try applyTypingAction(candidates: candidates) { candidate in
+        try startTyping(candidate)
+      }
+    } catch {
+      try simulateTypingFallback(
+        chatGUID: fallbackChatGUID,
+        lookup: fallbackLookup,
+        mode: .start
+      )
     }
     if runtime.jsonOutput {
       try JSONLines.print(["status": "started"])
@@ -144,6 +170,129 @@ enum TypingCommand {
         "Invalid duration: \(raw). Use e.g. 5s, 3000ms, 1m, or 1h")
     }
     return seconds
+  }
+
+  private static func typingFallbackLookup(input: ChatTargetInput, resolved: ResolvedChatTarget) -> String {
+    if !input.recipient.isEmpty { return input.recipient }
+    if let token = chatToken(from: resolved.chatIdentifier) { return token }
+    if let token = chatToken(from: resolved.chatGUID) { return token }
+    if !resolved.chatIdentifier.isEmpty { return resolved.chatIdentifier }
+    return resolved.chatGUID
+  }
+
+  private static func chatToken(from raw: String) -> String? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.contains(";") else { return nil }
+    let parts = trimmed.split(separator: ";", omittingEmptySubsequences: false)
+    guard let tail = parts.last else { return nil }
+    let token = String(tail).trimmingCharacters(in: .whitespacesAndNewlines)
+    return token.isEmpty ? nil : token
+  }
+
+  private enum TypingFallbackMode {
+    case start
+    case stop
+    case duration(seconds: TimeInterval)
+  }
+
+  private static func simulateTypingFallback(chatGUID: String?, lookup: String, mode: TypingFallbackMode)
+    throws
+  {
+    let effectiveLookup = lookup.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !effectiveLookup.isEmpty || (chatGUID?.isEmpty == false) else {
+      throw IMsgError.typingIndicatorFailed("Unable to resolve chat for typing fallback")
+    }
+    let guidArg = (chatGUID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+    let (modeRaw, durationRaw): (String, String) = {
+      switch mode {
+      case .start: return ("start", "0")
+      case .stop: return ("stop", "0")
+      case .duration(let seconds): return ("duration", String(max(1, Int(seconds.rounded()))))
+      }
+    }()
+
+    let script = """
+      on run argv
+        set chatGUID to item 1 of argv
+        set chatLookup to item 2 of argv
+        set modeName to item 3 of argv
+        set durationSeconds to item 4 of argv as integer
+
+        if chatLookup is not \"\" then
+          set the clipboard to chatLookup
+        end if
+
+        tell application \"Messages\"
+          activate
+          if chatGUID is not \"\" then
+            try
+              set targetChat to chat id chatGUID
+            end try
+          end if
+        end tell
+
+        delay 0.25
+
+        tell application \"System Events\"
+          tell process \"Messages\"
+            if chatLookup is not \"\" then
+              keystroke \"f\" using command down
+              delay 0.12
+              keystroke \"a\" using command down
+              keystroke \"v\" using command down
+              delay 0.2
+              key code 36
+              delay 0.2
+            end if
+
+            if modeName is \"stop\" then
+              keystroke \"a\" using command down
+              delay 0.05
+              key code 51
+              return
+            end if
+
+            if modeName is \"start\" then
+              keystroke \" \"
+              return
+            end if
+
+            repeat durationSeconds times
+              keystroke \" \"
+              delay 0.15
+              key code 51
+              delay 0.85
+            end repeat
+          end tell
+        end tell
+      end run
+      """
+    try runAppleScript(script, arguments: [guidArg, effectiveLookup, modeRaw, durationRaw])
+  }
+
+  private static func runAppleScript(_ source: String, arguments: [String]) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    process.arguments = ["-l", "AppleScript", "-"] + arguments
+
+    let stdinPipe = Pipe()
+    let stderrPipe = Pipe()
+    process.standardInput = stdinPipe
+    process.standardError = stderrPipe
+
+    try process.run()
+    if let data = source.data(using: .utf8) {
+      stdinPipe.fileHandleForWriting.write(data)
+    }
+    stdinPipe.fileHandleForWriting.closeFile()
+    process.waitUntilExit()
+
+    if process.terminationStatus != 0 {
+      let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+      let message = String(data: data, encoding: .utf8) ?? "Unknown AppleScript error"
+      throw IMsgError.appleScriptFailure(message.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
   }
 
   private static func applyTypingAction(
